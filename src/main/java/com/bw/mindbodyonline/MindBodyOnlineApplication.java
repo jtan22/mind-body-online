@@ -42,13 +42,12 @@ public class MindBodyOnlineApplication implements MindBodyOnlineConstants {
 			if (args.length != 3) {
 				printUsage();
 				args = getDefaultParameters();
-				printParameters(args);
-				waitForMidnight();
-			} else {
-				printParameters(args);
 			}
+			printParameters(args);
+			waitForMidnight(args[0], args[1], args[2]);
 			preLogin();
 			doBooking(args[0], args[1], args[2]);
+			requestLogout(sessionCode, loginToken);
 		};
 	}
 
@@ -171,25 +170,22 @@ public class MindBodyOnlineApplication implements MindBodyOnlineConstants {
 		System.out.println("Start time [" + LocalDateTime.now() + "]");
 		try {
 			requestAddBooking(sessionCode, duration, court, date);
+			requestCart(sessionCode);
 			String redirect = requestProceedToCheckout(sessionCode);
 			if (URL_GET_SELECT_SERVICE.equals(redirect)) {
 				requestSelectService(sessionCode);
 				requestAddItem(sessionCode, duration);
 				requestSelectPayment(sessionCode);
 				requestProceedToCheckout(sessionCode);
+			} else if (URL_GET_CART.equals(redirect)) {
+				requestCart(sessionCode);
+			} else if (redirect.contains(CHECKOUT_COMPLETE)) {
+				System.out.println("Already checked out, no need to select service");
 			}
 			HttpResponse<String> schedulesResponse = requestSchedules(sessionCode);
 			validateBooking(schedulesResponse.body(), duration, court, date);
-			requestLogout(sessionCode, loginToken);
 		} catch (Exception e) {
-			e.printStackTrace();
-			if (sessionCode != null && loginToken != null) {
-				try {
-					requestLogout(sessionCode, loginToken);
-				} catch (Exception ex) {
-					ex.printStackTrace();
-				}
-			}
+			System.err.println(e.getMessage());
 		}
 		System.out.println("Finish time [" + LocalDateTime.now() + "]");
 	}
@@ -390,7 +386,7 @@ public class MindBodyOnlineApplication implements MindBodyOnlineConstants {
 			throw new RuntimeException("Time not found in response body: " + time);
 		}
 		if (!responseBody.contains(duration)) {
-			throw new RuntimeException("Dueation not found in response body: " + duration);
+			throw new RuntimeException("Duration not found in response body: " + duration);
 		}
 		if (!responseBody.contains(court)) {
 			throw new RuntimeException("Court not found in response body: " + court);
@@ -403,33 +399,36 @@ public class MindBodyOnlineApplication implements MindBodyOnlineConstants {
 		return (endTime + " AEST").toUpperCase();
 	}
 
-	private void waitForMidnight() throws Exception {
-		boolean shouldWait = true;
-		while (shouldWait) {
-			long secondsToMidnight = getSecondsToMidnight();
-			if (secondsToMidnight / 3600 > 0) {
-				System.out.println("Sleep 1 hour");
-				Thread.sleep(3600 * 1000);
-			} else if (secondsToMidnight / 600 > 0) {
-				System.out.println("Sleep 10 minutes");
-				Thread.sleep(600 * 1000);
-			} else if (secondsToMidnight / 60 > 0) {
-				preLogin();
-				System.out.println("Sleep 1 minute");
-				Thread.sleep(60 * 1000);
-			} else {
-				preLogin();
-				System.out.println("Sleep " + secondsToMidnight + " seconds");
-				Thread.sleep(secondsToMidnight * 1000);
-				shouldWait = false;
-			}
+	private void waitForMidnight(String duration, String court, String dateTimeString) throws Exception {
+		LocalDateTime midnight = LocalDateTime.parse(dateTimeString)
+				.withHour(0)
+				.withMinute(0)
+				.withSecond(0)
+				.withNano(0)
+				.minusDays(7);
+		long secondsToMidnight = getSecondsToMidnight(midnight);
+		if (secondsToMidnight < 0) {
+			return;
+		}
+		if (secondsToMidnight > 10 * 60) {
+			long sleepSeconds = (secondsToMidnight - 10 * 60);
+			System.out.println("sleep [" + sleepSeconds + "] seconds");
+			Thread.sleep(sleepSeconds * 1000);
+		}
+		preLogin();
+		doBooking(duration, court, dateTimeString);
+
+		secondsToMidnight = getSecondsToMidnight(midnight);
+		if (secondsToMidnight > 0) {
+			long sleepSeconds = (secondsToMidnight);
+			System.out.println("sleep [" + sleepSeconds + "] seconds");
+			Thread.sleep(sleepSeconds * 1000);
 		}
 	}
 
-	private long getSecondsToMidnight() {
+	private long getSecondsToMidnight(LocalDateTime midnight) {
 		LocalDateTime now = LocalDateTime.now();
 		System.out.println("Now [" + now + "]");
-		LocalDateTime midnight = LocalDate.now().atTime(LocalTime.MIDNIGHT).plusDays(1);
 		long secondsToMidnight = Duration.between(now, midnight).getSeconds() + 1;
 		System.out.println("Seconds to midnight [" + secondsToMidnight + "]");
 		return secondsToMidnight;
